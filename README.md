@@ -1,70 +1,138 @@
-# Altitude
+# Altitude — Sistema de Relatório Diário
 
-Sistema de relatorio diario para a fazenda em fase de implantacao.
+Sistema de acompanhamento diário de execução para o projeto agrícola Altitude, em fase de implantação.
 
-## Setup
+## O que faz
 
-1. Criar um projeto no Supabase.
-2. Copiar as credenciais para o arquivo `.env.local`.
-3. Rodar [`supabase/schema.sql`](./supabase/schema.sql) no SQL Editor do Supabase.
-4. Executar `npm run dev`.
+- **07h BRT** — Boletim automático no Slack `#fazenda` + email com plano do dia e pendências de ontem
+- **Durante o dia** — Adolfo reporta via `/altitude-reportar` no Slack ou via link com token
+- **18h BRT** — Fechamento automático no Slack + email com previsto vs realizado e pendências para amanhã
 
-## Slack
+## Stack
 
-Para habilitar o comando `/altitude-reportar`:
+| Camada | Tecnologia |
+|---|---|
+| Framework | Next.js 15 (App Router) + TypeScript |
+| Estilização | Tailwind CSS |
+| Banco | Supabase (Postgres) |
+| Email | Resend |
+| Slack | Incoming Webhook + Slash Command + Interactivity |
+| Cron | Vercel Cron (07h e 18h BRT) |
+| Hospedagem | Vercel (Hobby, free tier) |
+| Domínio | `relatorio.altitudeagro.com.br` |
 
-1. Criar um Slack app em <https://api.slack.com/apps>.
-2. Em **Basic Information**, copiar o **Signing Secret** para `SLACK_SIGNING_SECRET` no `.env.local`.
-3. Em **OAuth & Permissions**, configurar os escopos necessarios para slash commands e interatividade do app, depois instalar o app no workspace.
-4. Em **Slash Commands**, criar `/altitude-reportar`.
-5. Em **Interactivity & Shortcuts**, ativar interatividade.
-6. Convidar ou manter o app disponivel no canal alvo `#fazenda`.
+## Variáveis de ambiente
 
-Dev local com ngrok:
+Crie um `.env.local` na raiz com:
 
-```bash
-npm run dev
-npx ngrok http 3000
+```env
+NEXT_PUBLIC_SUPABASE_URL=https://eiiwtxsgpwexxoaspswi.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+SUPABASE_SERVICE_ROLE_KEY=...
+RESEND_API_KEY=...
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
+SLACK_SIGNING_SECRET=...
+CRON_SECRET=...
+APP_BASE_URL=http://localhost:3000
+EMAIL_FROM=Altitude <ariel@altitudeagro.com.br>
 ```
 
-No Slack app config, atualizar:
-
-- Slash command Request URL: `https://SEU.ngrok.io/api/slack/reportar`
-- Interactivity & Shortcuts Request URL: `https://SEU.ngrok.io/api/slack/interactivity`
-
-Em producao, as Request URLs devem apontar para:
-
-- `https://relatorio.altitudeagro.com.br/api/slack/reportar`
-- `https://relatorio.altitudeagro.com.br/api/slack/interactivity`
-
-## Fechamento do dia
-
-O fechamento automatico roda as 18h BRT pela Vercel Cron (`0 21 * * *` em UTC), envia o resumo para o Slack via `SLACK_WEBHOOK_URL`, envia email via Resend usando `EMAIL_FROM` e salva o HTML em `daily_reports`.
-
-Para testar localmente:
-
-```bash
-curl -H "Authorization: Bearer SEU_CRON_SECRET" http://localhost:3000/api/cron/fechamento-dia
-```
-
-O relatorio completo fica em `/r/YYYY-MM-DD`, por exemplo `http://localhost:3000/r/2026-05-06`.
+Todas as variáveis acima (exceto `APP_BASE_URL` local) devem ser configuradas também nas **Environment Variables** do projeto na Vercel.
 
 ## Deploy
 
-Ordem recomendada para producao:
+### Pré-requisitos
 
-1. Fazer push para `https://github.com/arielramos1000/relatorio-altitude.git`.
-2. Na Vercel, importar o repo `relatorio-altitude` como projeto Next.js.
-3. Antes do primeiro deploy, cadastrar as variaveis de ambiente do `.env.local`, exceto `APP_BASE_URL` e `EMAIL_FROM`.
-4. Depois do deploy inicial, adicionar o dominio `relatorio.altitudeagro.com.br` no projeto Vercel.
-5. No DNS de `altitudeagro.com.br`, adicionar apenas o CNAME do subdominio que a Vercel mostrar. Nao alterar registros raiz `@` ou `www`, porque eles pertencem ao site principal.
-6. Aguardar propagacao e confirmar `Valid Configuration` na Vercel.
-7. Atualizar `APP_BASE_URL=https://relatorio.altitudeagro.com.br` nas Environment Variables da Vercel.
-8. No Resend, verificar o dominio `altitudeagro.com.br`, adicionando todos os registros DNS pedidos. Se ja existir SPF, mesclar os includes em um unico registro SPF.
-9. Depois da verificacao do Resend, configurar `EMAIL_FROM="Altitude <relatorio@altitudeagro.com.br>"` na Vercel.
-10. No Slack app, trocar as URLs para:
-    - `https://relatorio.altitudeagro.com.br/api/slack/reportar`
-    - `https://relatorio.altitudeagro.com.br/api/slack/interactivity`
-11. Rodar a migration [`supabase/migrations/0001_slack_state.sql`](./supabase/migrations/0001_slack_state.sql) no SQL Editor do Supabase de producao.
+- Conta Vercel conectada ao repositório GitHub
+- Projeto Supabase criado com schema aplicado (`supabase/schema.sql`)
+- Domínio `altitudeagro.com.br` com acesso ao painel DNS (Registro.br)
+- Conta Resend com domínio verificado
+- App Slack "Altitude" configurado
 
-Os crons ficam em Vercel Dashboard → projeto → Crons. Para teste manual, use o botao "Run" do dashboard ou o `curl` documentado acima com `CRON_SECRET`.
+### Passo a passo
+
+**1. Supabase**
+
+```sql
+-- Rodar supabase/schema.sql no SQL Editor do projeto
+-- Rodar supabase/migrations/0001_slack_state.sql
+```
+
+Gerar token do Adolfo (sem caracteres especiais):
+```powershell
+-join ((1..40) | ForEach-Object { '{0:x}' -f (Get-Random -Maximum 16) })
+```
+```sql
+UPDATE people SET access_token = 'TOKEN_GERADO' WHERE name = 'Adolfo';
+```
+
+**2. GitHub + Vercel**
+
+```powershell
+git push origin main
+```
+
+Na Vercel: importar repo → adicionar todas as env vars → fazer deploy.
+
+**3. Domínio**
+
+- Vercel → Settings → Domains → adicionar `relatorio.altitudeagro.com.br`
+- Registro.br → DNS → adicionar `CNAME relatorio → valor-gerado.vercel-dns-017.com.`
+- Vercel → atualizar `APP_BASE_URL=https://relatorio.altitudeagro.com.br` → Redeploy
+
+**4. Resend**
+
+- Resend → Domains → Add `altitudeagro.com.br`
+- Adicionar registros DNS (DKIM TXT, SPF TXT em `send`, DMARC TXT)
+- O SPF vai no subdomínio `send`, não no `@` — sem conflito com SPF existente
+- Atualizar `EMAIL_FROM=Altitude <ariel@altitudeagro.com.br>` na Vercel → Redeploy
+
+**5. Slack**
+
+- api.slack.com/apps → Altitude
+- Slash Command Request URL: `https://relatorio.altitudeagro.com.br/api/slack/reportar`
+- Interactivity Request URL: `https://relatorio.altitudeagro.com.br/api/slack/interactivity`
+
+**6. Validação**
+
+```
+# Página de reporte
+https://relatorio.altitudeagro.com.br/hoje?t=TOKEN_DO_ADOLFO
+
+# Cron boletim (teste manual)
+curl -H "Authorization: Bearer $CRON_SECRET" \
+  https://relatorio.altitudeagro.com.br/api/cron/boletim-manha
+
+# Cron fechamento (teste manual)
+curl -H "Authorization: Bearer $CRON_SECRET" \
+  https://relatorio.altitudeagro.com.br/api/cron/fechamento-dia
+```
+
+No Slack: `/altitude-reportar` no canal `#fazenda`.
+
+## Crons
+
+| Schedule (UTC) | Horário BRT | Rota |
+|---|---|---|
+| `0 10 * * *` | 07h | `/api/cron/boletim-manha` |
+| `0 21 * * *` | 18h | `/api/cron/fechamento-dia` |
+
+## Rotas
+
+| Rota | Descrição |
+|---|---|
+| `/hoje?t=TOKEN` | Formulário de reporte diário (link com token) |
+| `/r/[date]` | Relatório web público do fechamento |
+| `/api/reporte` | POST — salva execuções via formulário web |
+| `/api/slack/reportar` | POST — recebe slash command `/altitude-reportar` |
+| `/api/slack/interactivity` | POST — recebe interações dos botões Slack |
+| `/api/cron/boletim-manha` | GET — gera e envia boletim das 07h |
+| `/api/cron/fechamento-dia` | GET — gera e envia fechamento das 18h |
+
+## Usuários
+
+| Nome | Papel |
+|---|---|
+| Adolfo | Reporta (`reports_daily=true`) |
+| Sergio | Recebe relatórios (`receives_reports=true`) |
+| Ariel | Recebe relatórios (`receives_reports=true`) |
