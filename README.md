@@ -48,3 +48,23 @@ curl -H "Authorization: Bearer SEU_CRON_SECRET" http://localhost:3000/api/cron/f
 ```
 
 O relatorio completo fica em `/r/YYYY-MM-DD`, por exemplo `http://localhost:3000/r/2026-05-06`.
+
+## Deploy
+
+Ordem recomendada para producao:
+
+1. Fazer push para `https://github.com/arielramos1000/relatorio-altitude.git`.
+2. Na Vercel, importar o repo `relatorio-altitude` como projeto Next.js.
+3. Antes do primeiro deploy, cadastrar as variaveis de ambiente do `.env.local`, exceto `APP_BASE_URL` e `EMAIL_FROM`.
+4. Depois do deploy inicial, adicionar o dominio `relatorio.altitudeagro.com.br` no projeto Vercel.
+5. No DNS de `altitudeagro.com.br`, adicionar apenas o CNAME do subdominio que a Vercel mostrar. Nao alterar registros raiz `@` ou `www`, porque eles pertencem ao site principal.
+6. Aguardar propagacao e confirmar `Valid Configuration` na Vercel.
+7. Atualizar `APP_BASE_URL=https://relatorio.altitudeagro.com.br` nas Environment Variables da Vercel.
+8. No Resend, verificar o dominio `altitudeagro.com.br`, adicionando todos os registros DNS pedidos. Se ja existir SPF, mesclar os includes em um unico registro SPF.
+9. Depois da verificacao do Resend, configurar `EMAIL_FROM="Altitude <relatorio@altitudeagro.com.br>"` na Vercel.
+10. No Slack app, trocar as URLs para:
+    - `https://relatorio.altitudeagro.com.br/api/slack/reportar`
+    - `https://relatorio.altitudeagro.com.br/api/slack/interactivity`
+11. Rodar a migration [`supabase/migrations/0001_slack_state.sql`](./supabase/migrations/0001_slack_state.sql) no SQL Editor do Supabase de producao.
+
+Os crons ficam em Vercel Dashboard → projeto → Crons. Para teste manual, use o botao "Run" do dashboard ou o `curl` documentado acima com `CRON_SECRET`.

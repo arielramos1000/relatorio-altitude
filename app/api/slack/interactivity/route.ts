@@ -8,10 +8,17 @@ export const runtime = "nodejs";
 type ReportStatus = "feito" | "parcial" | "nao_feito";
 
 type ReportState = {
+  key: string;
   personId: string;
   date: string;
-  statuses: Map<string, ReportStatus>;
-  expiresAt: number;
+  statuses: Record<string, ReportStatus>;
+};
+
+type SlackInteractionStateRow = {
+  id: string;
+  payload: ReportState;
+  expires_at: string;
+  created_at: string | null;
 };
 
 type ExecutionInsert = {
@@ -58,10 +65,7 @@ type SlackBlockActionsPayload = {
 };
 
 const TIME_ZONE = "America/Sao_Paulo";
-const STATE_TTL_MS = 30 * 60 * 1000;
-
-// TODO: persistir em supabase quando for deploy
-const reportStates = new Map<string, ReportState>();
+const STATE_TTL_MINUTES = 30;
 
 function getTodayInSaoPaulo() {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -89,40 +93,84 @@ function getPayloadKey(payload: SlackBlockActionsPayload) {
   return `${teamId}:${userId}:${channelId}:${messageId}`;
 }
 
-function getStoredState(key: string) {
-  const state = reportStates.get(key);
-
-  if (!state) {
-    return null;
-  }
-
-  if (state.expiresAt <= Date.now()) {
-    reportStates.delete(key);
-    return null;
-  }
-
-  return state;
+function getExpiresAt() {
+  return new Date(Date.now() + STATE_TTL_MINUTES * 60 * 1000).toISOString();
 }
 
-function setStoredStatus(
+async function cleanupExpiredStates(supabase: ReturnType<typeof createServerClient>) {
+  await supabase
+    .from("slack_interaction_state")
+    .delete()
+    .lt("expires_at", new Date().toISOString());
+}
+
+async function getStoredState(
+  supabase: ReturnType<typeof createServerClient>,
+  slackUserId: string,
+  key: string
+) {
+  const { data, error } = await supabase
+    .from("slack_interaction_state")
+    .select("id,payload,expires_at,created_at")
+    .eq("slack_user_id", slackUserId)
+    .gt("expires_at", new Date().toISOString())
+    .order("created_at", { ascending: false })
+    .limit(20)
+    .returns<SlackInteractionStateRow[]>();
+
+  if (error) {
+    throw new Error(`Erro ao buscar estado Slack: ${error.message}`);
+  }
+
+  return (data ?? []).find((row) => row.payload.key === key) ?? null;
+}
+
+async function setStoredStatus(
+  supabase: ReturnType<typeof createServerClient>,
   key: string,
+  slackUserId: string,
   personId: string,
   date: string,
   itemId: string,
   status: ReportStatus
 ) {
-  const state = getStoredState(key) ?? {
+  const existingState = await getStoredState(supabase, slackUserId, key);
+  const payload: ReportState = existingState?.payload ?? {
+    key,
     personId,
     date,
-    statuses: new Map<string, ReportStatus>(),
-    expiresAt: Date.now() + STATE_TTL_MS,
+    statuses: {},
   };
 
-  state.personId = personId;
-  state.date = date;
-  state.statuses.set(itemId, status);
-  state.expiresAt = Date.now() + STATE_TTL_MS;
-  reportStates.set(key, state);
+  payload.personId = personId;
+  payload.date = date;
+  payload.statuses[itemId] = status;
+
+  if (existingState) {
+    const { error } = await supabase
+      .from("slack_interaction_state")
+      .update({
+        payload,
+        expires_at: getExpiresAt(),
+      })
+      .eq("id", existingState.id);
+
+    if (error) {
+      throw new Error(`Erro ao atualizar estado Slack: ${error.message}`);
+    }
+
+    return;
+  }
+
+  const { error } = await supabase.from("slack_interaction_state").insert({
+    slack_user_id: slackUserId,
+    payload,
+    expires_at: getExpiresAt(),
+  });
+
+  if (error) {
+    throw new Error(`Erro ao salvar estado Slack: ${error.message}`);
+  }
 }
 
 function parseStatusAction(actionId: string) {
@@ -200,86 +248,97 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = createServerClient();
-  const { data: person, error: personError } = await supabase
-    .from("people")
-    .select("id,name,slack_user_id,email,access_token,reports_daily,receives_reports,created_at")
-    .eq("slack_user_id", userId)
-    .eq("reports_daily", true)
-    .maybeSingle<Person>();
+  try {
+    const { data: person, error: personError } = await supabase
+      .from("people")
+      .select("id,name,slack_user_id,email,access_token,reports_daily,receives_reports,created_at")
+      .eq("slack_user_id", userId)
+      .eq("reports_daily", true)
+      .maybeSingle<Person>();
 
-  if (personError || !person) {
-    return NextResponse.json({
-      response_type: "ephemeral",
-      replace_original: false,
-      text: "Apenas Adolfo pode usar /altitude-reportar.",
-    });
-  }
-
-  const key = getPayloadKey(payload);
-  const today = getTodayInSaoPaulo();
-
-  if (actionId.startsWith("status_")) {
-    const statusAction = parseStatusAction(actionId);
-
-    if (statusAction) {
-      setStoredStatus(
-        key,
-        person.id,
-        today,
-        statusAction.itemId,
-        statusAction.status
-      );
-    }
-
-    return new Response(null, { status: 200 });
-  }
-
-  if (actionId === "enviar_reporte") {
-    const state = getStoredState(key);
-    const statuses = state?.statuses ?? new Map<string, ReportStatus>();
-    const notes = getExtraNotes(payload);
-    const executionRows: ExecutionInsert[] = Array.from(statuses.entries()).map(
-      ([plannedItemId, status]) => ({
-        date: state?.date ?? today,
-        person_id: person.id,
-        planned_item_id: plannedItemId,
-        status,
-        notes: null,
-      })
-    );
-
-    if (notes) {
-      executionRows.push({
-        date: state?.date ?? today,
-        person_id: person.id,
-        planned_item_id: null,
-        status: "extra",
-        notes,
+    if (personError || !person) {
+      return NextResponse.json({
+        response_type: "ephemeral",
+        replace_original: false,
+        text: "Apenas Adolfo pode usar /altitude-reportar.",
       });
     }
 
-    if (executionRows.length > 0) {
-      const { error: insertError } = await supabase
-        .from("executions")
-        .insert(executionRows)
-        .returns<Execution[]>();
+    const key = getPayloadKey(payload);
+    const today = getTodayInSaoPaulo();
 
-      if (insertError) {
-        return NextResponse.json(
-          {
-            response_type: "ephemeral",
-            replace_original: false,
-            text: "Nao consegui salvar o reporte agora. Tente de novo em instantes.",
-          },
-          { status: 500 }
+    if (actionId.startsWith("status_")) {
+      const statusAction = parseStatusAction(actionId);
+
+      if (statusAction) {
+        await setStoredStatus(
+          supabase,
+          key,
+          userId,
+          person.id,
+          today,
+          statusAction.itemId,
+          statusAction.status
         );
       }
+
+      return new Response(null, { status: 200 });
     }
 
-    reportStates.delete(key);
+    if (actionId === "enviar_reporte") {
+      const storedState = await getStoredState(supabase, userId, key);
+      const state = storedState?.payload;
+      const statusEntries = Object.entries(state?.statuses ?? {}) as Array<
+        [string, ReportStatus]
+      >;
+      const notes = getExtraNotes(payload);
+      const executionRows: ExecutionInsert[] = statusEntries.map(
+        ([plannedItemId, status]) => ({
+          date: state?.date ?? today,
+          person_id: person.id,
+          planned_item_id: plannedItemId,
+          status,
+          notes: null,
+        })
+      );
 
-    return savedResponse(statuses.size);
+      if (notes) {
+        executionRows.push({
+          date: state?.date ?? today,
+          person_id: person.id,
+          planned_item_id: null,
+          status: "extra",
+          notes,
+        });
+      }
+
+      if (executionRows.length > 0) {
+        const { error: insertError } = await supabase
+          .from("executions")
+          .insert(executionRows)
+          .returns<Execution[]>();
+
+        if (insertError) {
+          return NextResponse.json(
+            {
+              response_type: "ephemeral",
+              replace_original: false,
+              text: "Nao consegui salvar o reporte agora. Tente de novo em instantes.",
+            },
+            { status: 500 }
+          );
+        }
+      }
+
+      if (storedState) {
+        await supabase.from("slack_interaction_state").delete().eq("id", storedState.id);
+      }
+
+      return savedResponse(statusEntries.length);
+    }
+
+    return new Response(null, { status: 200 });
+  } finally {
+    await cleanupExpiredStates(supabase);
   }
-
-  return new Response(null, { status: 200 });
 }
