@@ -11,6 +11,9 @@ function escapeHtml(value: string) {
 
 export function renderBoletimHTML(boletim: BoletimManha): string {
   const baseUrl = process.env.APP_BASE_URL ?? "http://localhost:3000";
+  const hojeUrl = boletim.reporterToken
+    ? `${baseUrl}/hoje?t=${boletim.reporterToken}`
+    : `${baseUrl}/hoje`;
 
   const atividadesList =
     boletim.atividades.length > 0
@@ -81,7 +84,7 @@ export function renderBoletimHTML(boletim: BoletimManha): string {
               ${pendenciasSection}
               <tr>
                 <td style="padding: 24px 32px 34px;">
-                  <a href="${escapeHtml(baseUrl)}/hoje" style="display: inline-block; background: #18181b; color: #ffffff; text-decoration: none; font-size: 14px; line-height: 20px; font-weight: 700; padding: 12px 18px;">Reportar agora →</a>
+                  <a href="${escapeHtml(hojeUrl)}" style="display: inline-block; background: #18181b; color: #ffffff; text-decoration: none; font-size: 14px; line-height: 20px; font-weight: 700; padding: 12px 18px;">Reportar agora →</a>
                 </td>
               </tr>
             </table>
