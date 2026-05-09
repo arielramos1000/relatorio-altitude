@@ -7,7 +7,7 @@ import { ReporteDoDia } from "./reporte-do-dia";
 export const dynamic = "force-dynamic";
 
 type HojePageProps = {
-  searchParams: Promise<{ t?: string }>;
+  searchParams: Promise<{ t?: string; d?: string }>;
 };
 
 function getTodayBrt() {
@@ -15,7 +15,7 @@ function getTodayBrt() {
 }
 
 export default async function HojePage({ searchParams }: HojePageProps) {
-  const { t } = await searchParams;
+  const { t, d } = await searchParams;
 
   if (!t) notFound();
 
@@ -30,7 +30,8 @@ export default async function HojePage({ searchParams }: HojePageProps) {
 
   if (personError || !person) notFound();
 
-  const today = getTodayBrt();
+  // ?d=YYYY-MM-DD permite simular qualquer data (preview)
+  const today = d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? parseDateKey(d) : getTodayBrt();
   const dateKey = formatDateKey(today);
   const dateLabel = formatDateLabel(today);
 

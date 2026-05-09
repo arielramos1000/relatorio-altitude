@@ -64,7 +64,7 @@ export default function AdminPage() {
           <p className="text-xs text-zinc-500 uppercase tracking-widest">Altitude · Admin</p>
           <h1 className="text-2xl font-bold text-zinc-900 mt-1">Sincronizar planilha</h1>
           <p className="text-zinc-500 text-sm mt-1">
-            Importa as atividades do Adolfo da aba <strong>prog semana</strong> para os próximos dias.
+            Importa as atividades do Adolfo da aba <strong>REDE PROJETO</strong> para os próximos dias.
           </p>
         </div>
 
