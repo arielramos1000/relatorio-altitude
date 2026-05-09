@@ -23,7 +23,11 @@ export async function GET(req: NextRequest) {
   }
 
   const supabase = createServerClient();
-  const boletim = await gerarBoletimManha(getHojeBrt());
+  const dParam = req.nextUrl.searchParams.get("d");
+  const hoje = dParam && /^\d{4}-\d{2}-\d{2}$/.test(dParam)
+    ? parseDateKey(dParam)
+    : getHojeBrt();
+  const boletim = await gerarBoletimManha(hoje);
   const slackBlocks = renderBoletimSlack(boletim);
   const html = renderBoletimHTML(boletim);
   const subject = `Boletim Altitude · ${boletim.dateLabel}`;
