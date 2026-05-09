@@ -43,12 +43,15 @@ export function renderBoletimSlack(boletim: BoletimManha): object[] {
   }
 
   const baseUrl = process.env.APP_BASE_URL ?? "http://localhost:3000";
+  const hojeUrl = boletim.reporterToken
+    ? `${baseUrl}/hoje?t=${boletim.reporterToken}`
+    : `${baseUrl}/hoje`;
   blocks.push({ type: "divider" });
   blocks.push({
     type: "section",
     text: {
       type: "mrkdwn",
-      text: `Use */altitude-reportar* no Slack ou <${baseUrl}/hoje|abra o link de reporte>.`,
+      text: `Use */altitude-reportar* no Slack ou <${hojeUrl}|abra o link de reporte>.`,
     },
   });
 

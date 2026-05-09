@@ -20,6 +20,7 @@ export type BoletimManha = {
   generatedAt: string;
   atividades: BoletimAtividade[];
   pendenciasOntem: BoletimPendencia[];
+  reporterToken: string | null;
 };
 
 function addDaysToDateKey(dateKey: string, days: number): string {
@@ -35,15 +36,16 @@ export async function gerarBoletimManha(date: Date): Promise<BoletimManha> {
 
   const { data: people, error: peopleError } = await supabase
     .from("people")
-    .select("id,name")
+    .select("id,name,access_token")
     .eq("reports_daily", true)
     .order("name", { ascending: true })
-    .returns<Pick<Person, "id" | "name">[]>();
+    .returns<Pick<Person, "id" | "name" | "access_token">[]>();
 
   if (peopleError) throw new Error(`Erro ao buscar pessoas: ${peopleError.message}`);
 
   const personIds = (people ?? []).map((p) => p.id);
   const personById = new Map((people ?? []).map((p) => [p.id, p]));
+  const reporterToken = people?.[0]?.access_token ?? null;
 
   if (personIds.length === 0) {
     return {
@@ -52,6 +54,7 @@ export async function gerarBoletimManha(date: Date): Promise<BoletimManha> {
       generatedAt: new Date().toISOString(),
       atividades: [],
       pendenciasOntem: [],
+      reporterToken: null,
     };
   }
 
@@ -124,5 +127,6 @@ export async function gerarBoletimManha(date: Date): Promise<BoletimManha> {
     generatedAt: new Date().toISOString(),
     atividades,
     pendenciasOntem,
+    reporterToken,
   };
 }
