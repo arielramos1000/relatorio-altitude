@@ -5,17 +5,13 @@ import * as XLSX from "xlsx";
 
 export const runtime = "nodejs";
 
-const SHEET_NAME = "prog semana";
-const HEADER_ROW_INDEX = 1; // linha 2 (0-based)
-const DATE_COL = "data";
-const ADOLFO_COL = "adolfo";
-
-function parseActivities(raw: string): string[] {
-  return raw
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-}
+// Aba REDE PROJETO: C=inicio, D=fim, E=atividade, I=responsavel (contém "ADOLFO")
+const SHEET_NAME = "REDE PROJETO";
+// Índices das colunas (0-based, coluna A=0)
+const COL_INICIO = 2;  // C
+const COL_FIM    = 3;  // D
+const COL_ATIV   = 4;  // E
+const COL_RESP   = 8;  // I
 
 function toDateKey(value: unknown): string | null {
   if (!value) return null;
@@ -23,19 +19,20 @@ function toDateKey(value: unknown): string | null {
     return value.toISOString().slice(0, 10);
   }
   if (typeof value === "number") {
-    // Excel serial date
     const date = XLSX.SSF.parse_date_code(value);
     if (!date) return null;
-    const y = date.y;
-    const m = String(date.m).padStart(2, "0");
-    const d = String(date.d).padStart(2, "0");
-    return `${y}-${m}-${d}`;
+    return `${date.y}-${String(date.m).padStart(2, "0")}-${String(date.d).padStart(2, "0")}`;
   }
   if (typeof value === "string") {
     const match = value.match(/^(\d{4}-\d{2}-\d{2})/);
     if (match) return match[1];
   }
   return null;
+}
+
+function isAdolfo(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  return value.toUpperCase().includes("ADOLFO");
 }
 
 export async function POST(req: NextRequest) {
@@ -57,7 +54,7 @@ export async function POST(req: NextRequest) {
 
   if (!ws) {
     return NextResponse.json(
-      { error: `Aba "${SHEET_NAME}" não encontrada na planilha.` },
+      { error: `Aba "${SHEET_NAME}" não encontrada. Abas disponíveis: ${wb.SheetNames.join(", ")}` },
       { status: 400 }
     );
   }
@@ -66,33 +63,6 @@ export async function POST(req: NextRequest) {
     header: 1,
     defval: null,
   }) as unknown[][];
-
-  // encontrar linha do cabeçalho
-  let headerIdx = -1;
-  let dateColIdx = -1;
-  let adolfoColIdx = -1;
-
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    const adolfoIdx = row.findIndex(
-      (c) => typeof c === "string" && c.toLowerCase().trim() === ADOLFO_COL
-    );
-    if (adolfoIdx >= 0) {
-      headerIdx = i;
-      adolfoColIdx = adolfoIdx;
-      dateColIdx = row.findIndex(
-        (c) => typeof c === "string" && c.toLowerCase().trim() === DATE_COL
-      );
-      break;
-    }
-  }
-
-  if (headerIdx < 0 || dateColIdx < 0 || adolfoColIdx < 0) {
-    return NextResponse.json(
-      { error: "Colunas 'data' ou 'adolfo' não encontradas na aba prog semana." },
-      { status: 400 }
-    );
-  }
 
   const supabase = createServerClient();
   const { data: adolfo, error: personError } = await supabase
@@ -108,39 +78,43 @@ export async function POST(req: NextRequest) {
 
   const today = new Date().toISOString().slice(0, 10);
   const insertRows: { date: string; person_id: string; raw_text: string; source: "sheet_sync" }[] = [];
-  const futureDates: string[] = [];
+  const futureDates = new Set<string>();
 
-  for (let i = headerIdx + 1; i < rows.length; i++) {
-    const row = rows[i];
-    const dateKey = toDateKey(row[dateColIdx]);
-    if (!dateKey || dateKey < today) continue;
+  for (const row of rows) {
+    const startKey = toDateKey(row[COL_INICIO]);
+    const rawAtiv = row[COL_ATIV];
+    const resp = row[COL_RESP];
 
-    const rawAdolfo = row[adolfoColIdx];
-    if (!rawAdolfo || typeof rawAdolfo !== "string") continue;
+    // precisa ter data de início, atividade e ser do Adolfo
+    if (!startKey || !rawAtiv || typeof rawAtiv !== "string") continue;
+    if (!isAdolfo(resp)) continue;
+    if (startKey < today) continue;
 
-    const activities = parseActivities(rawAdolfo);
-    if (activities.length === 0) continue;
+    const atividade = rawAtiv.trim();
+    if (!atividade) continue;
 
-    futureDates.push(dateKey);
-    for (const activity of activities) {
-      insertRows.push({
-        date: dateKey,
-        person_id: adolfo.id,
-        raw_text: activity,
-        source: "sheet_sync",
-      });
-    }
+    // monta texto com data fim se existir
+    const endKey = toDateKey(row[COL_FIM]);
+    const rawText = endKey && endKey !== startKey
+      ? `${atividade} (até ${endKey.slice(8, 10)}/${endKey.slice(5, 7)})`
+      : atividade;
+
+    futureDates.add(startKey);
+    insertRows.push({
+      date: startKey,
+      person_id: adolfo.id,
+      raw_text: rawText,
+      source: "sheet_sync",
+    });
   }
 
-  if (futureDates.length > 0) {
-    // apaga apenas itens futuros de sheet_sync (preserva manuais e não toca no passado)
-    await supabase
-      .from("planned_items")
-      .delete()
-      .eq("person_id", adolfo.id)
-      .eq("source", "sheet_sync")
-      .gte("date", today);
-  }
+  // apaga apenas itens futuros de sheet_sync
+  await supabase
+    .from("planned_items")
+    .delete()
+    .eq("person_id", adolfo.id)
+    .eq("source", "sheet_sync")
+    .gte("date", today);
 
   if (insertRows.length > 0) {
     const { error: insertError } = await supabase
@@ -154,7 +128,7 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({
     ok: true,
-    diasSincronizados: [...new Set(futureDates)].length,
+    diasSincronizados: futureDates.size,
     atividadesInseridas: insertRows.length,
   });
 }
