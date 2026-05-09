@@ -1,6 +1,7 @@
 {
   "crons": [
     { "path": "/api/cron/boletim-manha", "schedule": "0 10 * * *" },
+    { "path": "/api/cron/lembrete-tarde", "schedule": "0 20 * * *" },
     { "path": "/api/cron/fechamento-dia", "schedule": "0 21 * * *" }
   ]
 }
