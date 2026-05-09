@@ -26,7 +26,9 @@ export async function GET(req: NextRequest) {
   }
 
   const baseUrl = process.env.APP_BASE_URL ?? "http://localhost:3000";
-  const hojeUrl = `${baseUrl}/hoje?t=${adolfo.access_token}`;
+  const dParam = req.nextUrl.searchParams.get("d");
+  const dateFragment = dParam && /^\d{4}-\d{2}-\d{2}$/.test(dParam) ? `&d=${dParam}` : "";
+  const hojeUrl = `${baseUrl}/hoje?t=${adolfo.access_token}${dateFragment}`;
   const mention = adolfo.slack_user_id ? `<@${adolfo.slack_user_id}>` : adolfo.name;
 
   const blocks = [
